@@ -1,0 +1,470 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"workspaceName": {
+			"type": "string",
+			"metadata": "Workspace name",
+			"defaultValue": "synapsevillage"
+		},
+		"synapsevillage-WorkspaceDefaultSqlServer_connectionString": {
+			"type": "secureString",
+			"metadata": "Secure string for 'connectionString' of 'synapsevillage-WorkspaceDefaultSqlServer'",
+			"defaultValue": "Integrated Security=False;Encrypt=True;Connection Timeout=30;Data Source=tcp:synapsevillage.sql.azuresynapse.net,1433;Initial Catalog=@{linkedService().DBName}"
+		},
+		"synapsevillage-WorkspaceDefaultStorage_properties_typeProperties_url": {
+			"type": "string",
+			"defaultValue": "https://synapsetrainingksy.dfs.core.windows.net"
+		}
+	},
+	"variables": {
+		"workspaceId": "[concat('Microsoft.Synapse/workspaces/', parameters('workspaceName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('workspaceName'), '/ndiatigue')]",
+			"type": "Microsoft.Synapse/workspaces/bigDataPools",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"annotations": []
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/synapsevillage-WorkspaceDefaultSqlServer')]",
+			"type": "Microsoft.Synapse/workspaces/linkedServices",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"parameters": {
+					"DBName": {
+						"type": "String"
+					}
+				},
+				"annotations": [],
+				"type": "AzureSqlDW",
+				"typeProperties": {
+					"connectionString": "[parameters('synapsevillage-WorkspaceDefaultSqlServer_connectionString')]"
+				},
+				"connectVia": {
+					"referenceName": "AutoResolveIntegrationRuntime",
+					"type": "IntegrationRuntimeReference"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/integrationRuntimes/AutoResolveIntegrationRuntime')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/synapsevillage-WorkspaceDefaultStorage')]",
+			"type": "Microsoft.Synapse/workspaces/linkedServices",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"annotations": [],
+				"type": "AzureBlobFS",
+				"typeProperties": {
+					"url": "[parameters('synapsevillage-WorkspaceDefaultStorage_properties_typeProperties_url')]"
+				},
+				"connectVia": {
+					"referenceName": "AutoResolveIntegrationRuntime",
+					"type": "IntegrationRuntimeReference"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/integrationRuntimes/AutoResolveIntegrationRuntime')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/AutoResolveIntegrationRuntime')]",
+			"type": "Microsoft.Synapse/workspaces/integrationRuntimes",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"type": "Managed",
+				"typeProperties": {
+					"computeProperties": {
+						"location": "AutoResolve",
+						"dataFlowProperties": {
+							"computeType": "General",
+							"coreCount": 8,
+							"timeToLive": 0
+						}
+					}
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/WorkspaceSystemIdentity')]",
+			"type": "Microsoft.Synapse/workspaces/credentials",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"type": "ManagedIdentity",
+				"typeProperties": {}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/LoadingData')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "--IMPORTANT READ FIRST:\n--To run block by block, highlight the blocks/line and press Shift + Enter on your keyboard OR click on Run button at the top.\n--Run each step at once, wait till completion, review its result and proceed to the next step.\n\n--connect to your dedicated SQL pool\n\n--STEP 1: Create SQL user\nCREATE USER DWLoader WITHOUT LOGIN;\n\n\n--STEP 2: Grant permission to the SQL User\n--TODO: Please change the \"sqlpool\" name accordingly to reflect your actual dedicated sql pool name\nGRANT CONTROL ON DATABASE::baobabcompute TO DWLoader;\n\n\n--STEP 3: Assign large resource grant to SQL user created\nEXEC sp_addrolemember 'largerc', 'DWLoader';\n\n\n--STEP 4: Create heap table for staging load\nCREATE TABLE StagingTrips (\n\t[vendorID] varchar(100),\t\n\t[tpepPickupDateTime] datetime2(7),\n\t[tpepDropoffDateTime] datetime2(7),\n\t[passengerCount] int,\n\t[tripDistance] float,\n\t[puLocationId] varchar(100),\n\t[doLocationId] varchar(100),\n\t[startLon] float,\n\t[startLat] float,\n\t[endLon] float,\n\t[endLat] float,\n\t[rateCodeId] int,\n\t[storeAndFwdFlag] varchar(100),\n\t[paymentType] varchar(100),\n\t[fareAmount] float,\n\t[extra] float,\n\t[mtaTax] float,\n\t[improvementSurcharge] varchar(100),\n\t[tipAmount] float,\n\t[tollsAmount] float,\n\t[totalAmount] float\n\t)\n\tWITH (HEAP, DISTRIBUTION = ROUND_ROBIN);\n\n\n--STEP 5: Run COPY INTO statement to load public New York Taxi data from public Azure Data Lake account into heap staging table\n--TODO (IMPORTANT): Highlight the whole code block EXECUTE AS... until REVERT;\nEXECUTE AS USER = 'DWLoader'\nCOPY INTO [dbo].[StagingTrips]\nFROM \n'https://azureopendatastorage.blob.core.windows.net/nyctlc/yellow/puYear=2016/puMonth=*/*.parquet',\n'https://azureopendatastorage.blob.core.windows.net/nyctlc/yellow/puYear=2017/puMonth=*/*.parquet',\n'https://azureopendatastorage.blob.core.windows.net/nyctlc/yellow/puYear=2018/puMonth=*/*.parquet'\nWITH\n(\n    FILE_TYPE = 'PARQUET'\n\t ,MAXERRORS = 0\n    ,IDENTITY_INSERT = 'OFF'\n)\nOPTION (LABEL = 'CopyIntoStagingTrips')\nREVERT;\n--Notice how long the data loading process takes! Keep in mind, the task loads 300M+ rows.\n\n\n--STEP 6: Check row count of the table\nSELECT COUNT(1) as 'RowCount' \nFROM dbo.StagingTrips\n--Isn't thats a big table? \n\n\n--STEP 7: Query how many parquet files were loaded and the Data Movement Service (DMS) that reads the data and writes them into SQL Pool table. \n--TODO: Upon running the query, in the result grid, click on Messages to verify the number of files loaded (720 records indicates the number of files loaded).\nSELECT DISTINCT ew.*, r.command, r.group_name\nFROM[sys].[dm_pdw_dms_external_work] ew \nJOIN sys.dm_pdw_exec_requests r \nON r.request_id = ew.request_id\nJOIN Sys.dm_pdw_request_steps s\nON r.request_id = s.request_id\nWHERE r.[label] = 'CopyIntoStagingTrips'\nORDER BY  input_name, dms_step_index\n--OPTIONAL: Expand the input_name column to review its source directory where the parquet files where loaded from within each Azure Data Lake folder\n\n\n--STEP 8: Load staged data into a hash distributed Columnstore Index table\n--TODO (IMPORTANT): Highlight the whole code block EXECUTE AS... until REVERT;\nEXECUTE AS USER = 'DWLoader'\nCREATE TABLE Trips\nWITH\n(\n\tCLUSTERED COLUMNSTORE INDEX,\n\tDISTRIBUTION = HASH([PULocationID])\n)\nAS\nSELECT * \nFROM StagingTrips\nOPTION( LABEL = 'CTAS: TripsHash')\nREVERT;\n\n--Do note that when loading data into a Clustered Columnstore Index, the data loading task also compresses the data into row group at the same time. \n--OPTIONAL: Run the following SQL query block that show many rows are compressed and how many row groups that are open in the Delta store.\nSELECT \n  rg.[state_desc] AS [RowGroup State], \n  COUNT(1) 'RowGroup Count' \nFROM \n  sys.[schemas] sm \n  JOIN sys.[tables] tb ON sm.[schema_id] = tb.[schema_id] \n  JOIN sys.[pdw_table_mappings] mp ON tb.[object_id] = mp.[object_id] \n  JOIN sys.[pdw_nodes_tables] nt ON nt.[name] = mp.[physical_name] \n  JOIN sys.[dm_pdw_nodes_db_column_store_row_group_physical_stats] rg ON rg.[object_id] = nt.[object_id] \n  AND rg.[pdw_node_id] = nt.[pdw_node_id] \n  AND rg.[distribution_id] = nt.[distribution_id] \nWHERE \n  tb.[name] = 'Trips' \nGROUP BY \n  rg.[state_desc]\n\n\n\n--STEP 9: Check row count of the CCI table\nSELECT COUNT(1) as 'RowCount' \nFROM dbo.Trips\n\n\n--STEP 10: Query how many readers and writers that \nSELECT dw.* \nFROM sys.dm_pdw_dms_workers dw\nJOIN sys.dm_pdw_exec_requests r \nON r.request_id = dw.request_id\nWHERE r.[label] = 'CTAS: TripsHash'\n--READ UPON RUNNING THE QUERY ABOVE:\n--Review how many WRITER (type column) write the rows into the table. If the bytes_processed = 0, it would mean that the writer is not writing data. \n--Ideally, when loading data into a hash table, it is recommended to have at least 60 unique values in the hash column and has very fewer NULLs (avoid if possible) otherwise, it would cause data skewness.\n--EXTERNAL_READER = Each line is an individual thread reading data from files\n--HASH_CONVERTER = Thread responsible for converting the data generated by the EXTERNAL_READER\n--WRITER = Thread responsible for writing to the correct distribution based on sink table definition. \n\n\n--IMPORTANT READ BEFORE RUNNING THE FOLLOWING QUERY: \n--Please change the connection to the \"master\" database in the \"Use database\" input at the top. \n--STEP 11: Run the following query to scale the DWU back to 100c. \nALTER DATABASE sqlpool --you may need to change the database name accordingly\nMODIFY (SERVICE_OBJECTIVE = 'DW100c');",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "baobabcompute",
+						"poolName": "baobabcompute"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/Read and write data from Azure Data Lake Storage Gen2')]",
+			"type": "Microsoft.Synapse/workspaces/notebooks",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"nbformat": 4,
+				"nbformat_minor": 2,
+				"bigDataPool": {
+					"referenceName": "ndiatigue",
+					"type": "BigDataPoolReference"
+				},
+				"sessionProperties": {
+					"driverMemory": "28g",
+					"driverCores": 4,
+					"executorMemory": "28g",
+					"executorCores": 4,
+					"numExecutors": 2,
+					"conf": {
+						"spark.dynamicAllocation.enabled": "false",
+						"spark.dynamicAllocation.minExecutors": "2",
+						"spark.dynamicAllocation.maxExecutors": "2",
+						"spark.autotune.trackingId": "0c1cdf6b-da8d-4f49-8e36-8a5245921811"
+					}
+				},
+				"metadata": {
+					"saveOutput": true,
+					"enableDebugMode": false,
+					"kernelspec": {
+						"name": "synapse_pyspark",
+						"display_name": "Synapse PySpark"
+					},
+					"language_info": {
+						"name": "python"
+					},
+					"a365ComputeOptions": {
+						"id": "/subscriptions/f7b07559-8b39-4edf-b76f-26d61684d72a/resourceGroups/rg-training-synapse/providers/Microsoft.Synapse/workspaces/synapsevillage/bigDataPools/ndiatigue",
+						"name": "ndiatigue",
+						"type": "Spark",
+						"endpoint": "https://synapsevillage.dev.azuresynapse.net/livyApi/versions/2019-11-01-preview/sparkPools/ndiatigue",
+						"auth": {
+							"type": "AAD",
+							"authResource": "https://dev.azuresynapse.net"
+						},
+						"sparkVersion": "3.3",
+						"nodeCount": 10,
+						"cores": 4,
+						"memory": 28,
+						"automaticScaleJobs": false
+					},
+					"sessionKeepAliveTimeout": 30
+				},
+				"cells": [
+					{
+						"cell_type": "markdown",
+						"metadata": {
+							"nteract": {
+								"transient": {
+									"deleting": false
+								}
+							}
+						},
+						"source": [
+							"# Access data on Azure Data Lake Storage Gen2 (ADLS Gen2) with Synapse Spark\n",
+							"\n",
+							"Azure Data Lake Storage Gen2 (ADLS Gen2) is used as the storage account associated with a Synapse workspace. A synapse workspace can have a default ADLS Gen2 storage account and additional linked storage accounts. \n",
+							"\n",
+							"You can access data on ADLS Gen2 with Synapse Spark via following URL:\n",
+							"    \n",
+							"    abfss://data@synapsetrainingksy.dfs.core.windows.net/taxi_zone_lookup.csv\n",
+							"\n",
+							"This notebook provides examples of how to read data from ADLS Gen2 account into a Spark context and how to write the output of Spark jobs directly into an ADLS Gen2 location.\n",
+							"\n",
+							"## Pre-requisites\n",
+							"Synapse leverage AAD pass-through to access any ADLS Gen2 account (or folder) to which you have a **Blob Storage Contributor** permission. No credentials or access token is required. "
+						]
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"## Load a sample data\n",
+							"\n",
+							"Let's first load the [public holidays](https://azure.microsoft.com/en-us/services/open-datasets/catalog/public-holidays/) of last 6 months from Azure Open datasets as a sample."
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"from azureml.opendatasets import PublicHolidays\n",
+							"\n",
+							"from datetime import datetime\n",
+							"from dateutil import parser\n",
+							"from dateutil.relativedelta import relativedelta\n",
+							"\n",
+							"\n",
+							"end_date = datetime.today()\n",
+							"start_date = datetime.today() - relativedelta(months=6)\n",
+							"hol = PublicHolidays(start_date=start_date, end_date=end_date)\n",
+							"hol_df = hol.to_spark_dataframe()"
+						],
+						"outputs": [],
+						"execution_count": 8
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"# Display 5 rows\n",
+							"hol_df.show(5, truncate = False)"
+						],
+						"outputs": [],
+						"execution_count": 9
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"## Write data to the default ADLS Gen2 storage\n",
+							"\n",
+							"We are going to write the spark dateframe to your default ADLS Gen2 storage account.\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"from pyspark.sql import SparkSession\n",
+							"from pyspark.sql.types import *\n",
+							"\n",
+							"# Primary storage info\n",
+							"account_name = 'synapsetrainingksy' # fill in your primary account name\n",
+							"container_name = 'data' # fill in your container name\n",
+							"relative_path = 'taxi/' # fill in your relative folder path\n",
+							"\n",
+							"adls_path = 'abfss://%s@%s.dfs.core.windows.net/%s' % (container_name, account_name, relative_path)\n",
+							"print('Primary storage account path: ' + adls_path)"
+						],
+						"outputs": [],
+						"execution_count": 13
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Save a dataframe as Parquet, JSON or CSV\n",
+							"If you have a dataframe, you can save it to Parquet or JSON with the .write.parquet(), .write.json() and .write.csv() methods respectively.\n",
+							"\n",
+							"Dataframes can be saved in any format, regardless of the input format.\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"parquet_path = adls_path + 'holiday.parquet'\n",
+							"json_path = adls_path + 'holiday.json'\n",
+							"csv_path = adls_path + 'holiday.csv'\n",
+							"print('parquet file path: ' + parquet_path)\n",
+							"print('json file path： ' + json_path)\n",
+							"print('csv file path: ' + csv_path)"
+						],
+						"outputs": [],
+						"execution_count": 14
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"hol_df.write.parquet(parquet_path, mode = 'overwrite')\n",
+							"hol_df.write.json(json_path, mode = 'overwrite')\n",
+							"hol_df.write.csv(csv_path, mode = 'overwrite', header = 'true')"
+						],
+						"outputs": [],
+						"execution_count": 15
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Save a dataframe as text files\n",
+							"If you have a dataframe that you want ot save as text file, you must first covert it to an RDD and then save that RDD as a text file.\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"# Define the text file path\n",
+							"text_path = adls_path + 'holiday.txt'\n",
+							"print('text file path: ' + text_path)"
+						],
+						"outputs": [],
+						"execution_count": 16
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"# Covert spark dataframe into RDD \n",
+							"hol_RDD = hol_df.rdd\n",
+							"type(hol_RDD)"
+						],
+						"outputs": [],
+						"execution_count": 17
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"If you have an RDD, you can convert it to a text file like the following:\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							" # Save RDD as text file\n",
+							"hol_RDD.saveAsTextFile(text_path)"
+						],
+						"outputs": [],
+						"execution_count": 18
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"# Read data from the default ADLS Gen2 storage\n",
+							""
+						]
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Create a dataframe from parquet files\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"df_parquet = spark.read.parquet(parquet_path)"
+						],
+						"outputs": [],
+						"execution_count": 19
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Create a dataframe from JSON files\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"df_json = spark.read.json(json_path)"
+						],
+						"outputs": [],
+						"execution_count": 20
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Create a dataframe from CSV files\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"df_csv = spark.read.csv(csv_path, header = 'true')"
+						],
+						"outputs": [],
+						"execution_count": 21
+					},
+					{
+						"cell_type": "markdown",
+						"metadata": {},
+						"source": [
+							"### Create an RDD from text file\n",
+							""
+						]
+					},
+					{
+						"cell_type": "code",
+						"metadata": {},
+						"source": [
+							"text = sc.textFile(text_path)"
+						],
+						"outputs": [],
+						"execution_count": 22
+					}
+				]
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/ndiatigue')]",
+			"type": "Microsoft.Synapse/workspaces/bigDataPools",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"autoPause": {
+					"enabled": true,
+					"delayInMinutes": 15
+				},
+				"autoScale": {
+					"enabled": true,
+					"maxNodeCount": 3,
+					"minNodeCount": 3
+				},
+				"nodeCount": 10,
+				"nodeSize": "Small",
+				"nodeSizeFamily": "MemoryOptimized",
+				"sparkVersion": "3.3",
+				"isComputeIsolationEnabled": false,
+				"sessionLevelPackagesEnabled": false,
+				"annotations": []
+			},
+			"dependsOn": [],
+			"location": "eastus"
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/baobabcompute')]",
+			"type": "Microsoft.Synapse/workspaces/sqlPools",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"collation": "SQL_Latin1_General_CP1_CI_AS",
+				"maxSizeBytes": 263882790666240,
+				"annotations": []
+			},
+			"dependsOn": [],
+			"location": "eastus"
+		}
+	]
+}
